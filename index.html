@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Vision Swap</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; color: #fff; font-family: sans-serif; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+
+    #setup { display: flex; flex-direction: column; align-items: center; gap: 20px; padding: 24px; }
+    #setup h1 { font-size: 22px; }
+    #setup p  { font-size: 14px; color: #aaa; text-align: center; }
+    button { padding: 14px 32px; border-radius: 12px; border: none; font-size: 16px; cursor: pointer; }
+    #btn-host { background: #3B8BD4; color: #fff; }
+    #btn-join  { background: #1D9E75; color: #fff; }
+    #status { font-size: 13px; color: #aaa; }
+
+    #vr-view { display: none; width: 100vw; height: 100vh; position: relative; }
+    #vr-view canvas { width: 100%; height: 100%; display: block; }
+
+    #close-btn {
+      position: absolute; top: 16px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255,255,255,0.15);
+      border: none; color: #fff;
+      padding: 8px 20px; border-radius: 20px;
+      font-size: 13px; cursor: pointer; z-index: 10;
+    }
+  </style>
+</head>
+<body>
+
+<div id="setup">
+  <h1>Vision Swap</h1>
+  <p>お互いのカメラ映像を交換して<br>相手の視点でVR体験します</p>
+  <button id="btn-host">ホスト（A）として開始</button>
+  <button id="btn-join">参加（B）として接続</button>
+  <div id="status">待機中...</div>
+</div>
+
+<div id="vr-view">
+  <canvas id="vr-canvas"></canvas>
+  <button id="close-btn">終了</button>
+</div>
+
+<script>
+  const SIGNAL_URL = 'wss://YOUR_RENDER_URL';
+  const ROOM = 'vision-room-1';
+
+  let ws, pc, localStream, remoteVideo;
+  let isHost = false;
+  let animFrame;
+
+  const config = {
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+  };
+
+  const setupEl  = document.getElementById('setup');
+  const vrEl     = document.getElementById('vr-view');
+  const canvas   = document.getElementById('vr-canvas');
+  const ctx      = canvas.getContext('2d');
+  const statusEl = document.getElementById('status');
+
+  document.getElementById('btn-host').onclick = () => start(true);
+  document.getElementById('btn-join').onclick  = () => start(false);
+  document.getElementById('close-btn').onclick = () => location.reload();
+
+  async function start(host) {
+    isHost = host;
+    statusEl.textContent = 'カメラを起動中...';
+
+    localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+
+    remoteVideo = document.createElement('video');
+    remoteVideo.autoplay = true;
+    remoteVideo.playsInline = true;
+
+    connectSignaling();
+  }
+
+  function connectSignaling() {
+    ws = new WebSocket(SIGNAL_URL);
+
+    ws.onopen = () => {
+      statusEl.textContent = '接続中...';
+      ws.send(JSON.stringify({ type: 'join', room: ROOM }));
+    };
+
+    ws.onmessage = async (e) => {
+      const msg = JSON.parse(e.data);
+
+      if (msg.type === 'peer-joined' && isHost) {
+        await createOffer();
+      } else if (msg.type === 'offer') {
+        await handleOffer(msg.sdp);
+      } else if (msg.type === 'answer') {
+        await pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+      } else if (msg.type === 'ice') {
+        await pc.addIceCandidate(msg.candidate);
+      } else if (msg.type === 'peer-left') {
+        statusEl.textContent = '相手が切断しました';
+      }
+    };
+  }
+
+  function createPC() {
+    pc = new RTCPeerConnection(config);
+
+    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+
+    pc.ontrack = (e) => {
+      remoteVideo.srcObject = e.streams[0];
+      showVR();
+    };
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate) {
+        ws.send(JSON.stringify({ type: 'ice', candidate: e.candidate }));
+      }
+    };
+  }
+
+  async function createOffer() {
+    createPC();
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    ws.send(JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+    statusEl.textContent = '相手の接続を待っています...';
+  }
+
+  async function handleOffer(sdp) {
+    createPC();
+    await pc.setRemoteDescription({ type: 'offer', sdp });
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    ws.send(JSON.stringify({ type: 'answer', sdp: answer.sdp }));
+  }
+
+  function showVR() {
+    setupEl.style.display = 'none';
+    vrEl.style.display = 'block';
+
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    drawVR();
+  }
+
+  function drawVR() {
+    if (remoteVideo.readyState >= 2) {
+      const w = canvas.width / 2;
+      const h = canvas.height;
+      ctx.drawImage(remoteVideo, 0, 0, w, h);
+      ctx.drawImage(remoteVideo, w, 0, w, h);
+    }
+    animFrame = requestAnimationFrame(drawVR);
+  }
+
+  window.addEventListener('resize', () => {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+  });
+</script>
+</body>
+</html>
