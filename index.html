@@ -110,9 +110,23 @@
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
 
     pc.ontrack = (e) => {
-      remoteVideo.srcObject = e.streams[0];
-      showVR();
-    };
+  remoteVideo.srcObject = e.streams[0];
+  showVR();
+};
+
+pc.onconnectionstatechange = () => {
+  if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+    statusEl.textContent = '再接続中...';
+    setTimeout(() => location.reload(), 2000);
+  }
+};
+
+pc.oniceconnectionstatechange = () => {
+  if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+    statusEl.textContent = '再接続中...';
+    setTimeout(() => location.reload(), 2000);
+  }
+};
 
     pc.onicecandidate = (e) => {
       if (e.candidate) {
@@ -147,15 +161,29 @@
     drawVR();
   }
 
-  function drawVR() {
-    if (remoteVideo.readyState >= 2) {
-      const w = canvas.width / 2;
-      const h = canvas.height;
-      ctx.drawImage(remoteVideo, 0, 0, w, h);
-      ctx.drawImage(remoteVideo, w, 0, w, h);
+  let lastTime = 0;
+let stalledCount = 0;
+
+function drawVR() {
+  if (remoteVideo.readyState >= 2) {
+    const current = remoteVideo.currentTime;
+    if (current === lastTime) {
+      stalledCount++;
+      if (stalledCount > 60) {
+        stalledCount = 0;
+        location.reload();
+      }
+    } else {
+      stalledCount = 0;
+      lastTime = current;
     }
-    animFrame = requestAnimationFrame(drawVR);
+    const w = canvas.width / 2;
+    const h = canvas.height;
+    ctx.drawImage(remoteVideo, 0, 0, w, h);
+    ctx.drawImage(remoteVideo, w, 0, w, h);
   }
+  animFrame = requestAnimationFrame(drawVR);
+}
 
   window.addEventListener('resize', () => {
     canvas.width  = window.innerWidth;
