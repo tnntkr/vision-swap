@@ -169,7 +169,7 @@ function drawVR() {
     const current = remoteVideo.currentTime;
     if (current === lastTime) {
       stalledCount++;
-      if (stalledCount > 60) {
+      if (stalledCount > 300) {
         stalledCount = 0;
         location.reload();
       }
